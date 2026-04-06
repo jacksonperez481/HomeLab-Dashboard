@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Homelab Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #111;
+            color: white;
+            text-align: center;
+        }
+        .card {
+            background: #1e1e1e;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px auto;
+            width: 340px;
+        }
+        .good {
+            color: #4caf50;
+            font-weight: bold;
+        }
+        .warn {
+            color: #ff9800;
+            font-weight: bold;
+        }
+        .bad {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .label {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <h1>Homelab Dashboard</h1>
+
+    <div class="card">
+        <h2>System</h2>
+        <p><span class="label">CPU:</span> <span id="cpu"></span>%</p>
+        <p><span class="label">Memory:</span> <span id="memory"></span>%</p>
+        <p><span class="label">Disk:</span> <span id="disk"></span>%</p>
+        <p><span class="label">Status:</span> <span id="system-status"></span></p>
+    </div>
+
+    <div class="card">
+        <h2>Services</h2>
+        <p><span class="label">SSH:</span> <span id="ssh"></span></p>
+        <p><span class="label">Cron:</span> <span id="cron"></span></p>
+        <p><span class="label">Docker:</span> <span id="docker"></span></p>
+    </div>
+
+    <div class="card">
+        <h2>Router</h2>
+        <p><span class="label">IP:</span> <span id="router-ip"></span></p>
+        <p><span class="label">Online:</span> <span id="router-online"></span></p>
+        <p><span class="label">Latency:</span> <span id="router-latency"></span></p>
+        <p><span class="label">Seen Up For:</span> <span id="router-seen-up"></span></p>
+    </div>
+
+    <script>
+        function setStatus(el, text, state) {
+            el.innerText = text;
+            el.className = state;
+        }
+
+        async function loadData() {
+            const system = await fetch("/system").then(r => r.json());
+            const services = await fetch("/services").then(r => r.json());
+            const router = await fetch("/router").then(r => r.json());
+
+            document.getElementById("cpu").innerText = system.cpu_percent;
+            document.getElementById("memory").innerText = system.memory_percent;
+            document.getElementById("disk").innerText = system.disk_percent;
+
+            const systemStatusEl = document.getElementById("system-status");
+            if (system.status === "healthy") {
+                setStatus(systemStatusEl, "healthy", "good");
+            } else {
+                setStatus(systemStatusEl, "warning", "warn");
+            }
+
+            setStatus(document.getElementById("ssh"), services.services.ssh ? "UP" : "DOWN", services.services.ssh ? "good" : "bad");
+            setStatus(document.getElementById("cron"), services.services.cron ? "UP" : "DOWN", services.services.cron ? "good" : "bad");
+            setStatus(document.getElementById("docker"), services.services.docker ? "UP" : "DOWN", services.services.docker ? "good" : "bad");
+
+            document.getElementById("router-ip").innerText = router.ip;
+            setStatus(
+                document.getElementById("router-online"),
+                router.online ? "UP" : "DOWN",
+                router.online ? "good" : "bad"
+            );
+            document.getElementById("router-latency").innerText = router.latency_ms === null ? "N/A" : `${router.latency_ms} ms`;
+            document.getElementById("router-seen-up").innerText = router.seen_up_for_seconds === null ? "N/A" : `${router.seen_up_for_seconds} sec`;
+        }
+
+        loadData();
+        setInterval(loadData, 5000);
+    </script>
+</body>
+</html>
