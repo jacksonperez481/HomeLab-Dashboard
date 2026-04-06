@@ -24,8 +24,6 @@ A lightweight monitoring dashboard built with FastAPI and Python to track system
 4. Run:
    uvicorn main:app --host 0.0.0.0 --port 8003
 
-## Screenshot
-
 ## Screenshots
 
 ![Dashboard](./Screenshot%202026-04-05%20210558.png)
