@@ -26,6 +26,8 @@ A lightweight monitoring dashboard built with FastAPI and Python to track system
 
 ## Screenshot
 
+## Screenshot
+
 ![Dashboard](Screenshot 2026-04-05 210558.png)
 
 
