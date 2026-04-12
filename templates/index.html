@@ -2,40 +2,19 @@
 <html>
 <head>
     <title>Homelab Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            background: #111;
-            color: white;
-            text-align: center;
-        }
-        .card {
-            background: #1e1e1e;
-            border-radius: 10px;
-            padding: 20px;
-            margin: 20px auto;
-            width: 340px;
-        }
-        .good {
-            color: #4caf50;
-            font-weight: bold;
-        }
-        .warn {
-            color: #ff9800;
-            font-weight: bold;
-        }
-        .bad {
-            color: #f44336;
-            font-weight: bold;
-        }
-        .label {
-            font-weight: bold;
-        }
+        body { font-family: Arial, sans-serif; background: #111; color: white; text-align: center; }
+        .card { background: #1e1e1e; border-radius: 10px; padding: 20px; margin: 20px auto; width: 340px; }
+        .chart-card { background: #1e1e1e; border-radius: 10px; padding: 20px; margin: 20px auto; width: 700px; }
+        .good { color: #4caf50; font-weight: bold; }
+        .warn { color: #ff9800; font-weight: bold; }
+        .bad  { color: #f44336; font-weight: bold; }
+        .label { font-weight: bold; }
     </style>
 </head>
 <body>
     <h1>Homelab Dashboard</h1>
-
     <div class="card">
         <h2>System</h2>
         <p><span class="label">CPU:</span> <span id="cpu"></span>%</p>
@@ -43,14 +22,12 @@
         <p><span class="label">Disk:</span> <span id="disk"></span>%</p>
         <p><span class="label">Status:</span> <span id="system-status"></span></p>
     </div>
-
     <div class="card">
         <h2>Services</h2>
         <p><span class="label">SSH:</span> <span id="ssh"></span></p>
         <p><span class="label">Cron:</span> <span id="cron"></span></p>
         <p><span class="label">Docker:</span> <span id="docker"></span></p>
     </div>
-
     <div class="card">
         <h2>Router</h2>
         <p><span class="label">IP:</span> <span id="router-ip"></span></p>
@@ -58,12 +35,12 @@
         <p><span class="label">Latency:</span> <span id="router-latency"></span></p>
         <p><span class="label">Seen Up For:</span> <span id="router-seen-up"></span></p>
     </div>
-
+    <div class="chart-card">
+        <h2>Metrics History</h2>
+        <canvas id="metricsChart" height="120"></canvas>
+    </div>
     <script>
-        function setStatus(el, text, state) {
-            el.innerText = text;
-            el.className = state;
-        }
+        function setStatus(el, text, state) { el.innerText = text; el.className = state; }
 
         async function loadData() {
             const system = await fetch("/system").then(r => r.json());
@@ -74,29 +51,60 @@
             document.getElementById("memory").innerText = system.memory_percent;
             document.getElementById("disk").innerText = system.disk_percent;
 
-            const systemStatusEl = document.getElementById("system-status");
-            if (system.status === "healthy") {
-                setStatus(systemStatusEl, "healthy", "good");
-            } else {
-                setStatus(systemStatusEl, "warning", "warn");
-            }
-
+            setStatus(document.getElementById("system-status"), system.status === "healthy" ? "healthy" : "warning", system.status === "healthy" ? "good" : "warn");
             setStatus(document.getElementById("ssh"), services.services.ssh ? "UP" : "DOWN", services.services.ssh ? "good" : "bad");
             setStatus(document.getElementById("cron"), services.services.cron ? "UP" : "DOWN", services.services.cron ? "good" : "bad");
             setStatus(document.getElementById("docker"), services.services.docker ? "UP" : "DOWN", services.services.docker ? "good" : "bad");
 
             document.getElementById("router-ip").innerText = router.ip;
-            setStatus(
-                document.getElementById("router-online"),
-                router.online ? "UP" : "DOWN",
-                router.online ? "good" : "bad"
-            );
+            setStatus(document.getElementById("router-online"), router.online ? "UP" : "DOWN", router.online ? "good" : "bad");
             document.getElementById("router-latency").innerText = router.latency_ms === null ? "N/A" : `${router.latency_ms} ms`;
             document.getElementById("router-seen-up").innerText = router.seen_up_for_seconds === null ? "N/A" : `${router.seen_up_for_seconds} sec`;
         }
 
+        let chart = null;
+
+        async function loadHistory() {
+            const history = await fetch("/metrics/history").then(r => r.json());
+            const reversed = [...history].reverse();
+            const labels = reversed.map(r => new Date(r.timestamp).toLocaleTimeString());
+            const cpu = reversed.map(r => r.cpu_percent);
+            const memory = reversed.map(r => r.memory_percent);
+            const disk = reversed.map(r => r.disk_percent);
+
+            if (chart) {
+                chart.data.labels = labels;
+                chart.data.datasets[0].data = cpu;
+                chart.data.datasets[1].data = memory;
+                chart.data.datasets[2].data = disk;
+                chart.update();
+            } else {
+                const ctx = document.getElementById("metricsChart").getContext("2d");
+                chart = new Chart(ctx, {
+                    type: "line",
+                    data: {
+                        labels,
+                        datasets: [
+                            { label: "CPU %", data: cpu, borderColor: "#f44336", fill: false, tension: 0.3 },
+                            { label: "Memory %", data: memory, borderColor: "#2196f3", fill: false, tension: 0.3 },
+                            { label: "Disk %", data: disk, borderColor: "#4caf50", fill: false, tension: 0.3 }
+                        ]
+                    },
+                    options: {
+                        scales: {
+                            y: { min: 0, max: 100, ticks: { color: "white" }, grid: { color: "#333" } },
+                            x: { ticks: { color: "white" }, grid: { color: "#333" } }
+                        },
+                        plugins: { legend: { labels: { color: "white" } } }
+                    }
+                });
+            }
+        }
+
         loadData();
+        loadHistory();
         setInterval(loadData, 5000);
+        setInterval(loadHistory, 10000);
     </script>
 </body>
 </html>
