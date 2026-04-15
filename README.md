@@ -33,7 +33,7 @@ Scans the local subnet for active devices and checks for common open ports.
 python3 network_scan.py
 ```
 
-![Network Scanner](./assets/Screenshot%202026-04-14%20203239.png)
+![Network Scanner](./assets/Screenshot%202026-04-14%20211542.png)
 
 ## Deployment (Linux Service)
 
