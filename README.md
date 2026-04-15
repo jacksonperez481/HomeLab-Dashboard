@@ -8,6 +8,7 @@ A lightweight monitoring dashboard built with FastAPI and Python to track system
 - Router monitoring (uptime and latency)
 - Real-time updating web interface
 - Color-coded health indicators
+- Local subnet network scanner
 
 ## Tech Stack
 - Python
@@ -24,14 +25,16 @@ A lightweight monitoring dashboard built with FastAPI and Python to track system
 4. Run:
    uvicorn main:app --host 0.0.0.0 --port 8003
 
-<<<<<<< HEAD
-## Screenshots
+## Network Scanner
 
-![Dashboard](./Screenshot%202026-04-05%20210558.png)
+Scans the local subnet for active devices and checks for common open ports.
 
-![Services](./Screenshot%202026-04-05%20210615.png)
+```bash
+python3 network_scan.py
+```
 
-=======
+![Network Scanner](./assets/Screenshot%202026-04-14%20203239.png)
+
 ## Deployment (Linux Service)
 
 The application is configured to run as a systemd service on a Linux server, allowing it to run continuously in the background and automatically start on system boot.
@@ -56,5 +59,10 @@ Restart=always
 
 [Install]
 WantedBy=multi-user.target
-(updated README with systemd service deployment)
+```
 
+## Screenshots
+
+![Dashboard](./Screenshot%202026-04-05%20210558.png)
+
+![Services](./Screenshot%202026-04-05%20210615.png)
