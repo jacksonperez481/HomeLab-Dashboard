@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """
 network_scan.py — Local subnet scanner
-Finds active hosts on a /24 subnet and checks for common open ports.
+Finds active hosts on a /24 subnet, checks for common open ports,
+and emails you when a new device joins the network.
 """
 
+import json
+import os
+import smtplib
 import socket
 import subprocess
 import ipaddress
+from datetime import datetime
+from email.mime.text import MIMEText
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from rich.console import Console
@@ -30,6 +36,10 @@ PORT_THREADS = 20
 PORT_TIMEOUT = 0.5
 
 # Well-known names for the ports we're scanning.
+# Set to True to mask IPs and replace hostnames with generic names
+ANONYMIZE   = False
+FAKE_SUBNET = "10.0.0.0/24"
+
 PORT_NAMES = {
     22:   "SSH",
     80:   "HTTP",
@@ -38,6 +48,26 @@ PORT_NAMES = {
     5432: "PostgreSQL",
     8003: "Alt HTTP",
 }
+
+# ─────────────────────────────────────────────
+# EMAIL ALERTS
+# Sends a Gmail alert when a new device is found.
+#
+# Setup:
+#   1. Enable 2-Step Verification on your Google account.
+#   2. Generate an App Password at:
+#      https://myaccount.google.com/apppasswords
+#   3. Export these in your shell (e.g. ~/.bashrc):
+#      export SCANNER_EMAIL_SENDER="you@gmail.com"
+#      export SCANNER_EMAIL_PASSWORD="your-app-password"
+#      export SCANNER_EMAIL_RECIPIENT="you@gmail.com"
+# ─────────────────────────────────────────────
+EMAIL_SENDER    = os.environ.get("SCANNER_EMAIL_SENDER", "")
+EMAIL_PASSWORD  = os.environ.get("SCANNER_EMAIL_PASSWORD", "")
+EMAIL_RECIPIENT = os.environ.get("SCANNER_EMAIL_RECIPIENT", "")
+
+# Path to the file that stores previously seen hosts.
+KNOWN_HOSTS_FILE = os.path.join(os.path.dirname(__file__), "known_hosts.json")
 
 console = Console(width=120)
 
@@ -151,8 +181,9 @@ def build_table(scan_results: list[dict]) -> Table:
     Takes a list of result dicts and returns a formatted rich Table.
     Each dict has keys: ip, hostname, ports (a dict of port→bool).
     """
+    display_subnet = FAKE_SUBNET if ANONYMIZE else SUBNET
     table = Table(
-        title=f"Network Scan — {SUBNET}",
+        title=f"Network Scan — {display_subnet}",
         show_header=True,
         header_style="bold cyan",
         border_style="bright_black",
@@ -187,12 +218,58 @@ def build_table(scan_results: list[dict]) -> Table:
 
 
 # ─────────────────────────────────────────────
+# KNOWN HOSTS PERSISTENCE
+# Tracks devices seen in previous scans so we
+# can detect genuinely new arrivals.
+# ─────────────────────────────────────────────
+def load_known_hosts() -> set[str]:
+    if not os.path.exists(KNOWN_HOSTS_FILE):
+        return set()
+    with open(KNOWN_HOSTS_FILE) as f:
+        return set(json.load(f))
+
+
+def save_known_hosts(hosts: set[str]) -> None:
+    with open(KNOWN_HOSTS_FILE, "w") as f:
+        json.dump(sorted(hosts), f, indent=2)
+
+
+# ─────────────────────────────────────────────
+# EMAIL ALERT
+# Sends a Gmail notification for each new device.
+# Requires SCANNER_EMAIL_* env vars to be set.
+# ─────────────────────────────────────────────
+def send_new_device_alert(new_hosts: list[dict]) -> None:
+    if not all([EMAIL_SENDER, EMAIL_PASSWORD, EMAIL_RECIPIENT]):
+        rprint("[yellow]Email not configured — skipping alert (set SCANNER_EMAIL_* env vars)[/yellow]")
+        return
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    alert_subnet = FAKE_SUBNET if ANONYMIZE else SUBNET
+    lines = [f"  • {h['display_ip']}  ({h['display_hostname']})" for h in new_hosts]
+    body = (
+        f"Network Scanner detected {len(new_hosts)} new device(s) at {timestamp}:\n\n"
+        + "\n".join(lines)
+        + f"\n\nSubnet: {alert_subnet}"
+    )
+
+    msg = MIMEText(body)
+    msg["Subject"] = f"[Network Alert] {len(new_hosts)} new device(s) on {alert_subnet}"
+    msg["From"]    = EMAIL_SENDER
+    msg["To"]      = EMAIL_RECIPIENT
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
+        server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
+
+
+# ─────────────────────────────────────────────
 # MAIN
 # Orchestrates the sweep → scan → display flow.
 # ─────────────────────────────────────────────
 def main():
     console.rule("[bold cyan]Network Scanner[/bold cyan]")
-    rprint(f"[dim]Subnet:[/dim] [bold]{SUBNET}[/bold]   "
+    rprint(f"[dim]Subnet:[/dim] [bold]{FAKE_SUBNET if ANONYMIZE else SUBNET}[/bold]   "
            f"[dim]Ports:[/dim] [bold]{', '.join(map(str, PORTS))}[/bold]\n")
 
     # Phase 1: find live hosts
@@ -207,10 +284,13 @@ def main():
     # Phase 2: scan ports on each live host
     console.print("[yellow]Phase 2:[/yellow] Scanning ports...", end=" ")
     scan_results = []
-    for ip in alive:
+    for i, ip in enumerate(alive, 1):
         hostname = resolve_hostname(ip)
         ports    = scan_ports(ip, PORTS)
-        scan_results.append({"ip": ip, "hostname": hostname, "ports": ports})
+        # Anonymize if enabled — mask last octet and replace hostname
+        display_ip       = f"10.0.0.{i}" if ANONYMIZE else ip
+        display_hostname = f"device-{i}"  if ANONYMIZE else hostname
+        scan_results.append({"ip": display_ip, "hostname": display_hostname, "ports": ports})
     console.print("[green]Done[/green]\n")
 
     # Phase 3: display results
@@ -222,6 +302,37 @@ def main():
         1 for host in scan_results for open_ in host["ports"].values() if open_
     )
     rprint(f"\n[dim]Scanned {len(alive)} host(s) · {total_open} open port(s) found[/dim]")
+
+    # Phase 4: detect new devices and send email alert
+    known = load_known_hosts()
+    # Always compare against real IPs, not anonymized display IPs
+    real_ips = set(alive)
+    new_ips  = real_ips - known
+
+    if new_ips:
+        new_hosts = []
+        for i, ip in enumerate(sorted(new_ips, key=lambda x: int(x.split(".")[-1])), 1):
+            hostname = resolve_hostname(ip)
+            new_hosts.append({
+                "ip": ip,
+                "hostname": hostname,
+                "display_ip":       f"10.0.0.{i}" if ANONYMIZE else ip,
+                "display_hostname": f"device-{i}"  if ANONYMIZE else hostname,
+            })
+        rprint(f"\n[bold yellow]New device(s) detected:[/bold yellow]")
+        for h in new_hosts:
+            rprint(f"  [cyan]{h['display_ip']}[/cyan]  ({h['display_hostname']})")
+
+        console.print("[yellow]Sending email alert...[/yellow]", end=" ")
+        try:
+            send_new_device_alert(new_hosts)
+            console.print("[green]Sent[/green]")
+        except Exception as e:
+            console.print(f"[red]Failed: {e}[/red]")
+    else:
+        rprint("[dim]No new devices since last scan.[/dim]")
+
+    save_known_hosts(known | real_ips)
 
 
 if __name__ == "__main__":
