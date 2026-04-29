@@ -1,60 +1,37 @@
 # Homelab Monitoring Dashboard
 
-A lightweight monitoring dashboard built with FastAPI and Python to track system performance and network health.
+A lightweight monitoring dashboard built with FastAPI and Python to track system performance and network health. Accessible from anywhere via Tailscale.
 
 ## Features
 - System metrics (CPU, memory, disk usage)
 - Linux service monitoring (SSH, cron, Docker)
 - Router monitoring (uptime and latency)
+- Local subnet network scanner with port detection
+- New device detection and highlighting
+- Auto-scan every 15 minutes
 - Real-time updating web interface
 - Color-coded health indicators
+- Deployed in Docker for portability
 
 ## Tech Stack
 - Python
 - FastAPI
 - psutil
-- Linux systemctl
-- HTML / JavaScript
+- Docker
+- HTML / JavaScript / Chart.js
 
 ## How to Run
 1. Clone the repo
-2. Create a virtual environment
-3. Install dependencies:
-   pip install -r requirements.txt
-4. Run:
-   uvicorn main:app --host 0.0.0.0 --port 8003
+2. Run with Docker:
+   ```
+   docker compose up -d
+   ```
+3. Open your browser at `http://localhost:8003`
 
-<<<<<<< HEAD
 ## Screenshots
 
-![Dashboard](./Screenshot%202026-04-05%20210558.png)
+![Dashboard](./dashboard.png)
 
-![Services](./Screenshot%202026-04-05%20210615.png)
+![Metrics Graph](./graph.png)
 
-=======
-## Deployment (Linux Service)
-
-The application is configured to run as a systemd service on a Linux server, allowing it to run continuously in the background and automatically start on system boot.
-
-### Key Benefits:
-- Persistent uptime (no manual startup required)
-- Runs independently of terminal sessions
-- Automatically restarts if the service stops
-
-### Service Configuration:
-
-```ini
-[Unit]
-Description=Homelab Dashboard API
-After=network.target
-
-[Service]
-User=jacksonperez481
-WorkingDirectory=/home/jacksonperez481/homelab-api
-ExecStart=/home/jacksonperez481/homelab-api/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8003
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-(updated README with systemd service deployment)
-
+![Network Scanner](./scanner.png)
