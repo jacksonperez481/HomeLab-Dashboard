@@ -15,4 +15,28 @@ services:
       - ./logs:/app/logs
     environment:
       - ROUTER_IP=${ROUTER_IP:-192.168.1.1}
+      - TZ=America/Chicago
     privileged: true
+
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: always
+    volumes:
+      - vaultwarden_data:/data
+    environment:
+      - WEBSOCKET_ENABLED=true
+      - SIGNUPS_ALLOWED=false
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: always
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./certs:/etc/nginx/certs
+
+volumes:
+  vaultwarden_data:

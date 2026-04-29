@@ -5,8 +5,19 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: Arial, sans-serif; background: #111; color: white; text-align: center; }
-        .card { background: #1e1e1e; border-radius: 10px; padding: 20px; margin: 20px auto; width: 340px; }
-        .chart-card { background: #1e1e1e; border-radius: 10px; padding: 20px; margin: 20px auto; width: 700px; }
+        .top-row { display: flex; justify-content: center; gap: 20px; margin: 20px auto; max-width: 1060px; }
+        .card { background: #1e1e1e; border-radius: 10px; padding: 20px; flex: 1; }
+        .chart-card { background: #1e1e1e; border-radius: 10px; padding: 20px; margin: 20px auto; width: 1060px; }
+        .scan-card { background: #1e1e1e; border-radius: 10px; padding: 20px; margin: 20px auto; width: 1060px; overflow-x: auto; }
+        .scan-btn { background: #2196f3; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 15px; margin-bottom: 14px; }
+        .scan-btn:disabled { background: #555; cursor: not-allowed; }
+        .scan-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .scan-table th { color: #2196f3; padding: 8px 12px; border-bottom: 1px solid #333; }
+        .scan-table td { padding: 7px 12px; border-bottom: 1px solid #222; }
+        .open { color: #4caf50; font-weight: bold; }
+        .closed { color: #444; }
+        .new-device { background: rgba(255, 193, 7, 0.1); }
+        .new-badge { background: #ffc107; color: #111; font-size: 11px; font-weight: bold; padding: 2px 7px; border-radius: 4px; margin-left: 6px; }
         .good { color: #4caf50; font-weight: bold; }
         .warn { color: #ff9800; font-weight: bold; }
         .bad  { color: #f44336; font-weight: bold; }
@@ -15,29 +26,53 @@
 </head>
 <body>
     <h1>Homelab Dashboard</h1>
-    <div class="card">
-        <h2>System</h2>
-        <p><span class="label">CPU:</span> <span id="cpu"></span>%</p>
-        <p><span class="label">Memory:</span> <span id="memory"></span>%</p>
-        <p><span class="label">Disk:</span> <span id="disk"></span>%</p>
-        <p><span class="label">Status:</span> <span id="system-status"></span></p>
-    </div>
-    <div class="card">
-        <h2>Services</h2>
-        <p><span class="label">SSH:</span> <span id="ssh"></span></p>
-        <p><span class="label">Cron:</span> <span id="cron"></span></p>
-        <p><span class="label">Docker:</span> <span id="docker"></span></p>
-    </div>
-    <div class="card">
-        <h2>Router</h2>
-        <p><span class="label">IP:</span> <span id="router-ip"></span></p>
-        <p><span class="label">Online:</span> <span id="router-online"></span></p>
-        <p><span class="label">Latency:</span> <span id="router-latency"></span></p>
-        <p><span class="label">Seen Up For:</span> <span id="router-seen-up"></span></p>
+    <div class="top-row">
+        <div class="card">
+            <h2>System</h2>
+            <p><span class="label">CPU:</span> <span id="cpu"></span>%</p>
+            <p><span class="label">Memory:</span> <span id="memory"></span>%</p>
+            <p><span class="label">Disk:</span> <span id="disk"></span>%</p>
+            <p><span class="label">Status:</span> <span id="system-status"></span></p>
+        </div>
+        <div class="card">
+            <h2>Services</h2>
+            <p><span class="label">SSH:</span> <span id="ssh"></span></p>
+            <p><span class="label">Cron:</span> <span id="cron"></span></p>
+            <p><span class="label">Docker:</span> <span id="docker"></span></p>
+        </div>
+        <div class="card">
+            <h2>Router</h2>
+            <p><span class="label">IP:</span> <span id="router-ip"></span></p>
+            <p><span class="label">Online:</span> <span id="router-online"></span></p>
+            <p><span class="label">Latency:</span> <span id="router-latency"></span></p>
+            <p><span class="label">Seen Up For:</span> <span id="router-seen-up"></span></p>
+        </div>
     </div>
     <div class="chart-card">
         <h2>Metrics History</h2>
         <canvas id="metricsChart" height="120"></canvas>
+    </div>
+    <div class="scan-card">
+        <h2>Network Scanner</h2>
+        <button class="scan-btn" id="scanBtn" onclick="startScan()">Scan Now</button>
+        <p id="scanStatus" style="color:#aaa; font-size:13px; margin-bottom:12px;"></p>
+        <table class="scan-table">
+            <thead>
+                <tr>
+                    <th>IP Address</th>
+                    <th>Hostname</th>
+                    <th>SSH</th>
+                    <th>HTTP</th>
+                    <th>HTTPS</th>
+                    <th>Dev</th>
+                    <th>PostgreSQL</th>
+                    <th>Dashboard</th>
+                </tr>
+            </thead>
+            <tbody id="scanResults">
+                <tr><td colspan="8" style="color:#555;">No scan yet — click Scan Now</td></tr>
+            </tbody>
+        </table>
     </div>
     <script>
         function setStatus(el, text, state) { el.innerText = text; el.className = state; }
@@ -100,6 +135,40 @@
                 });
             }
         }
+
+        async function startScan() {
+            document.getElementById("scanBtn").disabled = true;
+            document.getElementById("scanStatus").innerText = "Scanning... this takes about 30 seconds";
+            await fetch("/scan/start", { method: "POST" });
+            pollScan();
+        }
+
+        async function pollScan() {
+            const data = await fetch("/scan").then(r => r.json());
+            if (data.scanning) {
+                setTimeout(pollScan, 3000);
+                return;
+            }
+            document.getElementById("scanBtn").disabled = false;
+            document.getElementById("scanStatus").innerText = data.last_scan ? `Last scan: ${data.last_scan}` : "";
+            const ports = [22, 80, 443, 3000, 5432, 8003];
+            const tbody = document.getElementById("scanResults");
+            if (!data.hosts.length) {
+                tbody.innerHTML = "<tr><td colspan='8' style='color:#555;'>No hosts found</td></tr>";
+                return;
+            }
+            tbody.innerHTML = data.hosts.map(h => `
+                <tr class="${h.is_new ? 'new-device' : ''}">
+                    <td style="color:white;">${h.ip}${h.is_new ? '<span class="new-badge">NEW</span>' : ''}</td>
+                    <td style="color:#aaa;">${h.hostname}</td>
+                    ${ports.map(p => `<td class="${h.ports[p] ? 'open' : 'closed'}">${h.ports[p] ? 'OPEN' : '—'}</td>`).join("")}
+                </tr>
+            `).join("");
+        }
+
+        fetch("/scan").then(r => r.json()).then(data => {
+            if (data.hosts.length) pollScan();
+        });
 
         loadData();
         loadHistory();

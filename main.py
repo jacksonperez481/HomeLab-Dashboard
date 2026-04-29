@@ -8,6 +8,10 @@ import time
 import subprocess
 import re
 import os
+import ipaddress
+import threading
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import psycopg2
 from contextlib import contextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -88,13 +92,13 @@ def collect_metrics():
         print(f"DB error: {e}")
 
 def check_service(service_name):
+    checks = {
+        "ssh":    lambda: any("sshd" in open(f"/proc/{p}/comm").read() for p in os.listdir("/proc") if p.isdigit()),
+        "cron":   lambda: any("cron" in open(f"/proc/{p}/comm").read() for p in os.listdir("/proc") if p.isdigit()),
+        "docker": lambda: any("dockerd" in open(f"/proc/{p}/comm").read() for p in os.listdir("/proc") if p.isdigit()),
+    }
     try:
-        result = subprocess.run(
-            ["systemctl", "is-active", service_name],
-            capture_output=True,
-            text=True
-        )
-        return result.stdout.strip() == "active"
+        return checks[service_name]()
     except Exception:
         return False
 
@@ -103,7 +107,9 @@ def startup():
     init_db()
     scheduler = BackgroundScheduler()
     scheduler.add_job(collect_metrics, "interval", seconds=10)
+    scheduler.add_job(lambda: threading.Thread(target=run_scan, daemon=True).start(), "interval", minutes=15)
     scheduler.start()
+    threading.Thread(target=run_scan, daemon=True).start()
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request):
@@ -163,6 +169,67 @@ def router_status():
         "latency_ms": result["latency_ms"],
         "seen_up_for_seconds": seen_up_for_seconds
     }
+
+SUBNET = os.getenv("SUBNET", "192.168.1.0/24")
+SCAN_PORTS = [22, 80, 443, 3000, 5432, 8003]
+PORT_NAMES = {22: "SSH", 80: "HTTP", 443: "HTTPS", 3000: "Dev", 5432: "PostgreSQL", 8003: "Dashboard"}
+
+scan_state = {"scanning": False, "last_scan": None, "hosts": [], "new_devices": []}
+known_ips = set()
+
+def _ping(ip):
+    result = subprocess.run(["ping", "-c", "1", "-W", "1", ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return ip if result.returncode == 0 else None
+
+def _check_port(ip, port):
+    try:
+        with socket.create_connection((ip, port), timeout=0.5):
+            return True
+    except Exception:
+        return False
+
+def _resolve(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except Exception:
+        return ip
+
+def run_scan():
+    global known_ips
+    scan_state["scanning"] = True
+    hosts = [str(ip) for ip in ipaddress.ip_network(SUBNET, strict=False).hosts()]
+    alive = []
+    with ThreadPoolExecutor(max_workers=50) as ex:
+        for result in as_completed({ex.submit(_ping, ip): ip for ip in hosts}):
+            if result.result():
+                alive.append(result.result())
+    alive = sorted(alive, key=lambda ip: int(ip.split(".")[-1]))
+    current_ips = set(alive)
+    new_ips = current_ips - known_ips if known_ips else set()
+    results = []
+    for ip in alive:
+        ports = {}
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futures = {ex.submit(_check_port, ip, port): port for port in SCAN_PORTS}
+            for f in as_completed(futures):
+                ports[futures[f]] = f.result()
+        results.append({"ip": ip, "hostname": _resolve(ip), "ports": ports, "is_new": ip in new_ips})
+    known_ips = current_ips
+    scan_state["scanning"] = False
+    scan_state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    scan_state["hosts"] = results
+    scan_state["new_devices"] = [r for r in results if r["is_new"]]
+
+@app.get("/scan")
+def get_scan():
+    return scan_state
+
+@app.post("/scan/start")
+def start_scan():
+    if scan_state["scanning"]:
+        return {"message": "Scan already in progress"}
+    threading.Thread(target=run_scan, daemon=True).start()
+    return {"message": "Scan started"}
 
 @app.get("/metrics/history")
 def metrics_history():
