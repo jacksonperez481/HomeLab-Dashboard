@@ -13,8 +13,49 @@ provider "proxmox" {
   insecure  = true
 }
 
-resource "proxmox_virtual_environment_vm" "ubuntu_vm" {
+resource "proxmox_virtual_environment_vm" "ubuntu_vm" { # VM 01 — original
   name      = var.vm_name
+  node_name = "pve"
+
+  clone {
+    vm_id = 9000
+  }
+
+  cpu {
+    cores = var.vm_cores
+  }
+
+  memory {
+    dedicated = var.vm_memory
+  }
+
+  disk {
+    datastore_id = "local-lvm"
+    size         = 20
+    interface    = "scsi0"
+  }
+
+  network_device {
+    bridge = "vmbr0"
+    model  = "virtio"
+  }
+
+  initialization {
+    ip_config {
+      ipv4 {
+        address = "dhcp"
+      }
+    }
+    user_account {
+      username = var.vm_user
+      password = var.vm_password
+    }
+  }
+}
+
+# --- VM 02 --- copied from above, only changed resource label and name
+resource "proxmox_virtual_environment_vm" "ubuntu_vm_02" { # changed: resource label
+  name      = "ubuntu-vm-02" # changed: VM name
   node_name = "pve"
 
   clone {
