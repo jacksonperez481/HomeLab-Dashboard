@@ -1,0 +1,40 @@
+{
+  "devices": {
+    "192.168.1.1": {
+      "name": "Router",
+      "description": "Main home router / gateway",
+      "tags": [
+        "network",
+        "router"
+      ]
+    },
+    "192.168.1.214": {
+      "name": "Database Server",
+      "description": "PostgreSQL server for homelab-api (db: homelab)",
+      "tags": [
+        "server",
+        "database",
+        "postgresql"
+      ]
+    },
+    "192.168.1.167": {
+      "name": "Roku TV",
+      "description": "Living room Roku smart TV",
+      "tags": [
+        "tv",
+        "streaming"
+      ]
+    },
+    "192.168.1.50": {
+      "name": "Proxmox Server",
+      "description": "Proxmox hypervisor managing homelab VMs",
+      "tags": [
+        "server",
+        "proxmox",
+        "hypervisor",
+        "vm"
+      ]
+    }
+  },
+  "notes": "Add your own labels by asking the agent: 'label 192.168.1.x as My Server'"
+}

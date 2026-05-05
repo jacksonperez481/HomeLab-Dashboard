@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-psutil
-jinja2
-psycopg2-binary
-apscheduler
