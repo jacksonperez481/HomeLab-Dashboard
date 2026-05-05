@@ -10,6 +10,9 @@ import re
 import os
 import ipaddress
 import threading
+import smtplib
+import json
+from email.mime.text import MIMEText
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import psycopg2
@@ -102,12 +105,92 @@ def check_service(service_name):
     except Exception:
         return False
 
+def send_daily_report():
+    if not EMAIL_FROM or not EMAIL_PASSWORD:
+        print("Email not configured — skipping daily report")
+        return
+
+    try:
+        inv = json.loads(INVENTORY_FILE.read_text()) if INVENTORY_FILE.exists() else {}
+    except Exception:
+        inv = {}
+    inv_devices = inv.get("devices", {})
+
+    hosts = scan_state.get("hosts", [])
+    last_scan = scan_state.get("last_scan", "No scan yet")
+    new_devices = scan_state.get("new_devices", [])
+
+    hosts_with_time = sorted(
+        [(h, device_first_seen[h["ip"]]) for h in hosts if h["ip"] in device_first_seen],
+        key=lambda x: x[1],
+    )
+
+    lines = [
+        "Homelab Daily Network Report",
+        f"Generated : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Last Scan : {last_scan}",
+        "",
+        "=== NETWORK OVERVIEW ===",
+        f"Devices Online: {len(hosts)}",
+        "",
+    ]
+
+    if new_devices:
+        lines.append("⚠️  SUSPICIOUS / NEW DEVICES DETECTED:")
+        for d in new_devices:
+            name = inv_devices.get(d["ip"], {}).get("name", "Unknown")
+            lines.append(f"  - {d['ip']} ({d['hostname']}) — {name}")
+        lines.append("")
+    else:
+        lines.append("✅ No new or suspicious devices detected.")
+        lines.append("")
+
+    lines.append("=== DEVICE TIME ON NETWORK ===")
+    if hosts_with_time:
+        longest_host, longest_ts = hosts_with_time[0]
+        longest_name = inv_devices.get(longest_host["ip"], {}).get("name", "Unknown")
+        lines.append(f"Longest connected: {longest_host['ip']} ({longest_name}) — {format_duration(time.time() - longest_ts)}")
+        lines.append("")
+        for h, first_ts in hosts_with_time:
+            name = inv_devices.get(h["ip"], {}).get("name", "Unknown")
+            lines.append(f"  {h['ip']:<16} {name:<22} {format_duration(time.time() - first_ts)}")
+    else:
+        lines.append("No device time data available yet.")
+
+    lines += [
+        "",
+        "=== ALL DEVICES ONLINE ===",
+    ]
+    for h in hosts:
+        name = inv_devices.get(h["ip"], {}).get("name", "Unknown")
+        open_ports = [PORT_NAMES.get(p, str(p)) for p, is_open in h["ports"].items() if is_open]
+        lines.append(f"  {h['ip']:<16} {name:<22} Ports: {', '.join(open_ports) or 'none'}")
+
+    body = "\n".join(lines)
+    subject = f"Homelab Daily Report — {datetime.now().strftime('%Y-%m-%d')}"
+
+    try:
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = EMAIL_FROM
+        msg["To"] = EMAIL_TO
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(EMAIL_FROM, EMAIL_PASSWORD)
+            smtp.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+        print(f"Daily report sent to {EMAIL_TO}")
+    except Exception as e:
+        print(f"Failed to send daily report: {e}")
+
+
 @app.on_event("startup")
 def startup():
     init_db()
     scheduler = BackgroundScheduler()
     scheduler.add_job(collect_metrics, "interval", seconds=10)
     scheduler.add_job(lambda: threading.Thread(target=run_scan, daemon=True).start(), "interval", minutes=15)
+    scheduler.add_job(send_daily_report, "cron", hour=8, minute=0)
     scheduler.start()
     threading.Thread(target=run_scan, daemon=True).start()
 
@@ -122,7 +205,6 @@ def health():
 @app.get("/system")
 def system_health():
     uptime_seconds = time.time() - boot_time
-    uptime_hours = round(uptime_seconds / 3600, 2)
     cpu = psutil.cpu_percent(interval=1)
     memory = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
@@ -134,7 +216,8 @@ def system_health():
         "cpu_percent": cpu,
         "memory_percent": memory.percent,
         "disk_percent": disk.percent,
-        "uptime_hours": uptime_hours,
+        "uptime_seconds": round(uptime_seconds),
+        "uptime_formatted": format_duration(uptime_seconds),
         "status": status
     }
 
@@ -159,7 +242,7 @@ def router_status():
     if result["online"]:
         if router_last_up_time is None:
             router_last_up_time = time.time()
-        seen_up_for_seconds = round(time.time() - router_last_up_time, 1)
+        seen_up_for_seconds = round(time.time() - router_last_up_time)
     else:
         router_last_up_time = None
         seen_up_for_seconds = None
@@ -167,15 +250,42 @@ def router_status():
         "ip": router_ip,
         "online": result["online"],
         "latency_ms": result["latency_ms"],
-        "seen_up_for_seconds": seen_up_for_seconds
+        "seen_up_for_seconds": seen_up_for_seconds,
+        "seen_up_for_formatted": format_duration(seen_up_for_seconds),
     }
 
 SUBNET = os.getenv("SUBNET", "192.168.1.0/24")
 SCAN_PORTS = [22, 80, 443, 3000, 5432, 8003]
 PORT_NAMES = {22: "SSH", 80: "HTTP", 443: "HTTPS", 3000: "Dev", 5432: "PostgreSQL", 8003: "Dashboard"}
 
+EMAIL_FROM = os.getenv("SCANNER_EMAIL_SENDER", "")
+EMAIL_PASSWORD = os.getenv("SCANNER_EMAIL_PASSWORD", "")
+EMAIL_TO = os.getenv("SCANNER_EMAIL_RECIPIENT", EMAIL_FROM)
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+INVENTORY_FILE = Path("/home/jacksonperez481/homelab-inventory.json")
+
 scan_state = {"scanning": False, "last_scan": None, "hosts": [], "new_devices": []}
 known_ips = set()
+device_first_seen: dict[str, float] = {}
+
+def format_duration(seconds: float | None) -> str:
+    if seconds is None:
+        return "N/A"
+    s = int(seconds)
+    days, s = divmod(s, 86400)
+    hours, s = divmod(s, 3600)
+    minutes, secs = divmod(s, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{secs}s")
+    return " ".join(parts)
+
 
 def _ping(ip):
     result = subprocess.run(["ping", "-c", "1", "-W", "1", ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -195,8 +305,9 @@ def _resolve(ip):
         return ip
 
 def run_scan():
-    global known_ips
+    global known_ips, device_first_seen
     scan_state["scanning"] = True
+    now = time.time()
     hosts = [str(ip) for ip in ipaddress.ip_network(SUBNET, strict=False).hosts()]
     alive = []
     with ThreadPoolExecutor(max_workers=50) as ex:
@@ -206,6 +317,9 @@ def run_scan():
     alive = sorted(alive, key=lambda ip: int(ip.split(".")[-1]))
     current_ips = set(alive)
     new_ips = current_ips - known_ips if known_ips else set()
+    for ip in alive:
+        if ip not in device_first_seen:
+            device_first_seen[ip] = now
     results = []
     for ip in alive:
         ports = {}
@@ -213,7 +327,14 @@ def run_scan():
             futures = {ex.submit(_check_port, ip, port): port for port in SCAN_PORTS}
             for f in as_completed(futures):
                 ports[futures[f]] = f.result()
-        results.append({"ip": ip, "hostname": _resolve(ip), "ports": ports, "is_new": ip in new_ips})
+        seen_for = round(time.time() - device_first_seen[ip])
+        results.append({
+            "ip": ip,
+            "hostname": _resolve(ip),
+            "ports": ports,
+            "is_new": ip in new_ips,
+            "seen_for_seconds": seen_for,
+        })
     known_ips = current_ips
     scan_state["scanning"] = False
     scan_state["last_scan"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

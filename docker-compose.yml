@@ -13,6 +13,7 @@ services:
       - /run/systemd:/run/systemd:ro
       - /var/run/dbus:/var/run/dbus:ro
       - ./logs:/app/logs
+      - /home/jacksonperez481/homelab-inventory.json:/home/jacksonperez481/homelab-inventory.json:ro
     environment:
       - ROUTER_IP=${ROUTER_IP:-192.168.1.1}
       - TZ=America/Chicago
